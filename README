@@ -1,0 +1,25 @@
+Go implementation of Winternitz-Lamport-Diffie one-time signature scheme.
+
+If the hash function is one-way and of sufficient length, the private key is
+random, not known to the attacker, and used to sign only one message, and
+there are no bugs in this implementation, it is infeasible to forge
+signatures (even on quantum computer).
+
+
+INSTALLATION
+
+	$ go get github.com/dchest/wots
+
+USAGE
+
+	import "github.com/dchest/wots"
+
+See documentation for example.
+
+DOCUMENTATION
+
+See http://go.pkgdoc.org/github.com/dchest/wots
+
+LICENSE
+	
+BSD-like, see LICENSE file.
