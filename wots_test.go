@@ -77,3 +77,26 @@ func TestVerify(t *testing.T) {
 	}
 
 }
+
+type devZero int
+
+func (z *devZero) Read(b []byte) (int, error) {
+	for i := range b {
+		b[i] = 0
+	}
+	return len(b), nil
+}
+
+var zeroReader = new(devZero)
+
+func BenchmarkSignVerifySHA256(b *testing.B) {
+	msg := []byte(testMessage)
+	k, _ := otssha256.GenerateKey(zeroReader)
+	klen := len(k.B)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sig := otssha256.Sign(k, msg)
+		otssha256.Verify(k.PublicKey, msg, sig)
+		k.B = make([]byte, klen)
+	}
+}
