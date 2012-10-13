@@ -7,7 +7,8 @@
 // If the hash function is one-way and of sufficient length, the private key is
 // random, not known to the attacker, and used to sign only one message, and
 // there are no bugs in this implementation, it is infeasible to forge
-// signatures (even on quantum computer).
+// signatures (even on quantum computer, provided that they can't break the
+// underlying hash function)).
 //
 // Implementation details
 //
