@@ -34,7 +34,7 @@ func Example() {
 
 	// Verifying.
 	if wotssha256.Verify(publicKey, message, signature) {
-		fmt.Println("verification successed")
+		fmt.Println("verification succeeded")
 	} else {
 		fmt.Println("verification failed")
 	}
