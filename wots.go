@@ -80,28 +80,32 @@ func (s *Scheme) GenerateKey(rand io.Reader) (*PrivateKey, error) {
 	if s.blockSize < 16 || s.blockSize > 128 {
 		return nil, errors.New("wrong hash output size")
 	}
-	k := new(PrivateKey)
 	// Generate random private key.
-	k.B = make([]byte, (s.blockSize+2)*s.blockSize)
-	if _, err := io.ReadFull(rand, k.B); err != nil {
+	randKeySl := make([]byte, (s.blockSize+2)*s.blockSize)
+	if _, err := io.ReadFull(rand, randKeySl); err != nil {
 		return nil, err
 	}
+
+	return s.BytesToPrivateKey(rand, randKeySl)
+}
+
+//bytes to *PrivateKey object
+func (s *Scheme) BytesToPrivateKey (rand io.Reader, srcKey []byte) (*PrivateKey, error){
 	// Generate message randomization parameter.
 	// Note that r must be different for each generated message, but since
 	// we already can't use the same private key to sign more than one
 	// message, we can generate it here rather than when signing.
-	k.r = make([]byte, s.blockSize)
-	if _, err := io.ReadFull(rand, k.r); err != nil {
+	randomParamSl := make([]byte, s.blockSize)
+	if _, err := io.ReadFull(rand, randomParamSl); err != nil {
 		return nil, err
 	}
 	// Create public key from private key.
 	keyHash := s.hashFunc()
 	blockHash := s.hashFunc()
-	for i := 0; i < len(k.B); i += s.blockSize {
-		keyHash.Write(hashBlock(blockHash, k.B[i:i+s.blockSize], 256))
+	for i := 0; i < len(srcKey); i += s.blockSize {
+		keyHash.Write(hashBlock(blockHash, srcKey[i:i+s.blockSize], 256))
 	}
-	k.PublicKey = keyHash.Sum(nil)
-	return k, nil
+	return &PrivateKey{keyHash.Sum(nil), srcKey, randomParamSl}, nil
 }
 
 // messageDigest returns a randomized digest of message with 2-byte checksum.
