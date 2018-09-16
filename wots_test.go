@@ -5,34 +5,52 @@
 package wots
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"testing"
 )
 
-var otssha256 = NewScheme(sha256.New)
+var otssha256 = NewScheme(sha256.New, rand.Reader)
 
 func TestSignVerify(t *testing.T) {
-	k, err := otssha256.GenerateKey(rand.Reader)
+	priv, pub, err := otssha256.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generating keys: %s", err)
 	}
 	msg := []byte(testMessage)
-	sig := otssha256.Sign(k, msg)
-	if !otssha256.Verify(k.PublicKey, msg, sig) {
+	sig, err := otssha256.Sign(priv, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !otssha256.Verify(pub, msg, sig) {
 		t.Fatalf("failed to verify correct signature")
 	}
 
-	if otssha256.Verify(k.PublicKey, msg[1:], sig) {
+	if otssha256.Verify(pub, msg[1:], sig) {
 		t.Fatalf("verified wrong message")
 	}
 
 	sig[1] = 0
-	if otssha256.Verify(k.PublicKey, msg, sig) {
+	if otssha256.Verify(pub, msg, sig) {
 		t.Fatalf("verified wrong signature")
 	}
 
+}
+
+func TestPublicKeyFromPrivate(t *testing.T) {
+	priv, pub, err := otssha256.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub2, err := otssha256.PublicKeyFromPrivate(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(pub, pub2) {
+		t.Fatalf("expected %x, got %x", pub, pub2)
+	}
 }
 
 var testMessage = "hello world!"
@@ -89,14 +107,17 @@ func (z *devZero) Read(b []byte) (int, error) {
 
 var zeroReader = new(devZero)
 
+var otssha256Insecure = NewScheme(sha256.New, zeroReader)
+
 func BenchmarkSignVerifySHA256(b *testing.B) {
 	msg := []byte(testMessage)
-	k, _ := otssha256.GenerateKey(zeroReader)
-	klen := len(k.B)
+	priv, pub, err := otssha256Insecure.GenerateKeyPair()
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sig := otssha256.Sign(k, msg)
-		otssha256.Verify(k.PublicKey, msg, sig)
-		k.B = make([]byte, klen)
+		sig, _ := otssha256Insecure.Sign(priv, msg)
+		otssha256Insecure.Verify(pub, msg, sig)
 	}
 }

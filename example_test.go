@@ -8,29 +8,30 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+
 	"github.com/dchest/wots"
 )
 
 func Example() {
 	// Define scheme using SHA-256. There's no need to always
 	// create this scheme, it can be a global variable.
-	var wotssha256 = wots.NewScheme(sha256.New)
+	var wotssha256 = wots.NewScheme(sha256.New, rand.Reader)
 
 	// Generating key pair.
-	key, err := wotssha256.GenerateKey(rand.Reader)
+	privateKey, publicKey, err := wotssha256.GenerateKeyPair()
 	if err != nil {
 		panic("key generation failed")
 	}
 
-	// Messages will be verified against this public key.
-	publicKey := key.PublicKey // => 32-byte public key
-
 	// Signing.
 	message := []byte("Hello world!")
-	signature := wotssha256.Sign(key, message) // => 1120-byte signature
+	signature, err := wotssha256.Sign(privateKey, message) // => 1120-byte signature
+	if err != nil {
+		panic("signature calculation failed")
+	}
 
-	// After signing once, key can't be used to sign more messages.
-	// For safety, private key bytes are destroyed, only key.PublicKey left.
+	// After signing once, private key must not be used to sign more messages!
+	// This is a one-time signature scheme.
 
 	// Verifying.
 	if wotssha256.Verify(publicKey, message, signature) {

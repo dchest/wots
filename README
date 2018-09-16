@@ -19,8 +19,8 @@ See documentation for example.
 
 DOCUMENTATION
 
-See http://go.pkgdoc.org/github.com/dchest/wots
+See https://godoc.org/github.com/dchest/wots
 
 LICENSE
-	
+
 BSD-like, see LICENSE file.

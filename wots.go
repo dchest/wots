@@ -1,4 +1,4 @@
-// Copyright 2012 Dmitry Chestnykh. All rights reserved.
+// Copyright 2012, 2017 Dmitry Chestnykh. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -30,24 +30,29 @@ import (
 	"io"
 )
 
-// TODO(dchest): find a better name for Scheme.
-
 // Scheme represents one-time signature signing/verification configuration.
 type Scheme struct {
 	blockSize int
 	hashFunc  func() hash.Hash
+	rand      io.Reader
 }
 
 // NewScheme returns a new signing/verification scheme from the given function
-// returning hash.Hash type. The hash function output size must have minimum 16
-// and maximum 128 bytes, otherwise GenerateKey method of this scheme will always
-// return error.
-func NewScheme(h func() hash.Hash) *Scheme {
+// returning hash.Hash type and a random byte reader (must be cryptographically
+// secure, such as crypto/rand.Reader).
+//
+// The hash function output size must have minimum 16 and maximum 128 bytes,
+// otherwise GenerateKeyPair method will always return error.
+func NewScheme(h func() hash.Hash, rand io.Reader) *Scheme {
 	return &Scheme{
 		blockSize: h().Size(),
 		hashFunc:  h,
+		rand:      rand,
 	}
 }
+
+// PrivateKeySize returns private key size in bytes.
+func (s *Scheme) PrivateKeySize() int { return (s.blockSize + 2) * s.blockSize }
 
 // PublicKeySize returns public key size in bytes.
 func (s *Scheme) PublicKeySize() int { return s.blockSize }
@@ -55,13 +60,11 @@ func (s *Scheme) PublicKeySize() int { return s.blockSize }
 // SignatureSize returns signature size in bytes.
 func (s *Scheme) SignatureSize() int { return (s.blockSize+2)*s.blockSize + s.blockSize }
 
-type PrivateKey struct {
-	PublicKey []byte // public key bytes
-	B         []byte // private key bytes
-	r         []byte // message digest randomization
-}
+// PublicKey represents a public key.
+type PublicKey []byte
 
-var cnt = 0
+// PrivateKey represents a private key.
+type PrivateKey []byte
 
 // hashBlock returns in hashed the given number of times: H(...H(in)).
 // If times is 0, returns a copy of input without hashing it.
@@ -75,33 +78,36 @@ func hashBlock(h hash.Hash, in []byte, times int) (out []byte) {
 	return
 }
 
-// GenerateKey generates a new private and public key pair.
-func (s *Scheme) GenerateKey(rand io.Reader) (*PrivateKey, error) {
+// GenerateKeyPair generates a new private and public key pair.
+func (s *Scheme) GenerateKeyPair() (PrivateKey, PublicKey, error) {
 	if s.blockSize < 16 || s.blockSize > 128 {
-		return nil, errors.New("wrong hash output size")
+		return nil, nil, errors.New("wots: wrong hash output size")
 	}
-	k := new(PrivateKey)
 	// Generate random private key.
-	k.B = make([]byte, (s.blockSize+2)*s.blockSize)
-	if _, err := io.ReadFull(rand, k.B); err != nil {
-		return nil, err
+	privateKey := make([]byte, s.PrivateKeySize())
+	if _, err := io.ReadFull(s.rand, privateKey); err != nil {
+		return nil, nil, err
 	}
-	// Generate message randomization parameter.
-	// Note that r must be different for each generated message, but since
-	// we already can't use the same private key to sign more than one
-	// message, we can generate it here rather than when signing.
-	k.r = make([]byte, s.blockSize)
-	if _, err := io.ReadFull(rand, k.r); err != nil {
-		return nil, err
+	publicKey, err := s.PublicKeyFromPrivate(privateKey)
+	if err != nil {
+		return nil, nil, err
 	}
+	return privateKey, publicKey, nil
+}
+
+// PublicKeyFromPrivate returns a public key corresponding to the given private key.
+func (s *Scheme) PublicKeyFromPrivate(privateKey PrivateKey) (PublicKey, error) {
+	if len(privateKey) != s.PrivateKeySize() {
+		return nil, errors.New("wots: private key size doesn't match the scheme")
+	}
+
 	// Create public key from private key.
 	keyHash := s.hashFunc()
 	blockHash := s.hashFunc()
-	for i := 0; i < len(k.B); i += s.blockSize {
-		keyHash.Write(hashBlock(blockHash, k.B[i:i+s.blockSize], 256))
+	for i := 0; i < len(privateKey); i += s.blockSize {
+		keyHash.Write(hashBlock(blockHash, privateKey[i:i+s.blockSize], 256))
 	}
-	k.PublicKey = keyHash.Sum(nil)
-	return k, nil
+	return keyHash.Sum(nil), nil
 }
 
 // messageDigest returns a randomized digest of message with 2-byte checksum.
@@ -146,29 +152,38 @@ func messageDigest(h hash.Hash, r []byte, msg []byte) []byte {
 }
 
 // Sign signs an arbitrary length message using the given private key and
-// returns signature. After signing, private key bytes are destroyed and the
-// same key cannot be used again to sign more messages.
-func (s *Scheme) Sign(k *PrivateKey, message []byte) (sig []byte) {
-	sig = append(sig, k.r...)
+// returns signature.
+//
+// IMPORTANT: Do not use the same private key to sign more than one message!
+// It's a one-time signature.
+func (s *Scheme) Sign(privateKey PrivateKey, message []byte) (sig []byte, err error) {
+	if len(privateKey) != s.PrivateKeySize() {
+		return nil, errors.New("wots: private key size doesn't match the scheme")
+	}
+
 	blockHash := s.hashFunc()
-	b := k.B
-	for _, v := range messageDigest(s.hashFunc(), k.r, message) {
-		sig = append(sig, hashBlock(blockHash, b[:s.blockSize], int(v))...)
-		b = b[s.blockSize:]
+
+	// Generate message randomization parameter.
+	r := make([]byte, s.blockSize)
+	if _, err := io.ReadFull(s.rand, r); err != nil {
+		return nil, err
 	}
-	// Destroy private key bytes.
-	for i := range k.B {
-		k.B[i] = 0
+
+	// Prepend randomization parameter to signature.
+	sig = append(sig, r...)
+
+	for _, v := range messageDigest(s.hashFunc(), r, message) {
+		sig = append(sig, hashBlock(blockHash, privateKey[:s.blockSize], int(v))...)
+		privateKey = privateKey[s.blockSize:]
 	}
-	k.B = nil
 	return
 }
 
 // Verify verifies the signature of message using the public key,
 // and returns true iff the signature is valid.
-// 
+//
 // Note: verification time depends on message and signature.
-func (s *Scheme) Verify(publicKey []byte, message []byte, sig []byte) bool {
+func (s *Scheme) Verify(publicKey PublicKey, message []byte, sig []byte) bool {
 	if len(publicKey) != s.PublicKeySize() || len(sig) != s.SignatureSize() {
 		return false
 	}
