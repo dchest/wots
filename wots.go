@@ -32,9 +32,32 @@ import (
 
 // Scheme represents one-time signature signing/verification configuration.
 type Scheme struct {
-	blockSize int
-	hashFunc  func() hash.Hash
-	rand      io.Reader
+	digestSize int
+	blockSize  int
+	pubkeySize int
+	chainFunc  func() hash.Hash
+	hashFunc   func() hash.Hash
+	rand       io.Reader
+}
+
+// NewScheme returns a new signing/verification scheme from the given function
+// returning hash.Hash type and a random byte reader (must be cryptographically
+// secure, such as crypto/rand.Reader).
+//
+// The hash function output size must have minimum 16 and maximum 128 bytes,
+// otherwise GenerateKeyPair method will always return error.
+//
+// This variant of the function supports separate hash functions: (1) for
+// chaining and (2) for message hashing and final hashing into public key.
+func NewScheme2(h, chainFunc func() hash.Hash, rand io.Reader) *Scheme {
+	return &Scheme{
+		digestSize: h().Size(),
+		blockSize:  chainFunc().Size(),
+		pubkeySize: h().Size(),
+		chainFunc:  chainFunc,
+		hashFunc:   h,
+		rand:       rand,
+	}
 }
 
 // NewScheme returns a new signing/verification scheme from the given function
@@ -44,21 +67,17 @@ type Scheme struct {
 // The hash function output size must have minimum 16 and maximum 128 bytes,
 // otherwise GenerateKeyPair method will always return error.
 func NewScheme(h func() hash.Hash, rand io.Reader) *Scheme {
-	return &Scheme{
-		blockSize: h().Size(),
-		hashFunc:  h,
-		rand:      rand,
-	}
+	return NewScheme2(h, h, rand)
 }
 
 // PrivateKeySize returns private key size in bytes.
-func (s *Scheme) PrivateKeySize() int { return (s.blockSize + 2) * s.blockSize }
+func (s *Scheme) PrivateKeySize() int { return (s.digestSize + 2) * s.blockSize }
 
 // PublicKeySize returns public key size in bytes.
-func (s *Scheme) PublicKeySize() int { return s.blockSize }
+func (s *Scheme) PublicKeySize() int { return s.pubkeySize }
 
 // SignatureSize returns signature size in bytes.
-func (s *Scheme) SignatureSize() int { return (s.blockSize+2)*s.blockSize + s.blockSize }
+func (s *Scheme) SignatureSize() int { return (s.digestSize+2)*s.blockSize + s.digestSize }
 
 // PublicKey represents a public key.
 type PublicKey []byte
@@ -80,7 +99,7 @@ func hashBlock(h hash.Hash, in []byte, times int) (out []byte) {
 
 // GenerateKeyPair generates a new private and public key pair.
 func (s *Scheme) GenerateKeyPair() (PrivateKey, PublicKey, error) {
-	if s.blockSize < 16 || s.blockSize > 128 {
+	if s.digestSize < 16 || s.digestSize > 128 {
 		return nil, nil, errors.New("wots: wrong hash output size")
 	}
 	// Generate random private key.
@@ -103,7 +122,7 @@ func (s *Scheme) PublicKeyFromPrivate(privateKey PrivateKey) (PublicKey, error) 
 
 	// Create public key from private key.
 	keyHash := s.hashFunc()
-	blockHash := s.hashFunc()
+	blockHash := s.chainFunc()
 	for i := 0; i < len(privateKey); i += s.blockSize {
 		keyHash.Write(hashBlock(blockHash, privateKey[i:i+s.blockSize], 256))
 	}
@@ -161,10 +180,10 @@ func (s *Scheme) Sign(privateKey PrivateKey, message []byte) (sig []byte, err er
 		return nil, errors.New("wots: private key size doesn't match the scheme")
 	}
 
-	blockHash := s.hashFunc()
+	blockHash := s.chainFunc()
 
 	// Generate message randomization parameter.
-	r := make([]byte, s.blockSize)
+	r := make([]byte, s.digestSize)
 	if _, err := io.ReadFull(s.rand, r); err != nil {
 		return nil, err
 	}
@@ -187,10 +206,10 @@ func (s *Scheme) Verify(publicKey PublicKey, message []byte, sig []byte) bool {
 	if len(publicKey) != s.PublicKeySize() || len(sig) != s.SignatureSize() {
 		return false
 	}
-	d := messageDigest(s.hashFunc(), sig[:s.blockSize], message)
-	sig = sig[s.blockSize:]
+	d := messageDigest(s.hashFunc(), sig[:s.digestSize], message)
+	sig = sig[s.digestSize:]
 	keyHash := s.hashFunc()
-	blockHash := s.hashFunc()
+	blockHash := s.chainFunc()
 	for _, v := range d {
 		keyHash.Write(hashBlock(blockHash, sig[:s.blockSize], 256-int(v)))
 		sig = sig[s.blockSize:]
